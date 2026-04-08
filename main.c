@@ -10,6 +10,9 @@
 
 #define ARRAY_LEN(x) ((int)(sizeof(x) / sizeof(x[0])))
 
+size_t WINDOW_SIZE = 1 << 10;
+size_t STEP_SIZE = 1 << 10 / 2;
+
 void hammingWindow(float in[], size_t size) {
   // Apply a tapering window to reduce spectral leakage before FFT.
   for (size_t n = 0; n < size; n++) {
@@ -125,96 +128,26 @@ int createRayImage(Image *dst, float *data, int width, int height) {
   return 0;
 }
 
-int main(int argc, char *argv[]) {
-  size_t WINDOW_SIZE = 1 << 10;
-  size_t STEP_SIZE = WINDOW_SIZE / 2;
+float *processAudio(char *srcPath, int *dstImageWidth, int *dstImageHeight);
 
+int main(int argc, char *argv[]) {
   if (argc < 2) {
     printf("You should provide the audio file path\n");
     return -1;
   }
 
   // MARK:- Audio
-  char *sourceFilePath = argv[1];
 
-  SF_INFO fileInfo;
-  memset(&fileInfo, 0, sizeof(fileInfo));
+  int imageWidth = 0, imageHeight = 0;
 
-  SNDFILE *file = sf_open(sourceFilePath, SFM_READ, &fileInfo);
-  if (!file) {
-    printf("Error opening file: %s\n", sf_strerror(NULL));
-    return 1;
-  }
+  float *imageData = processAudio(argv[1], &imageWidth, &imageHeight);
 
-  printf("Processing the audio file: %s\n", sourceFilePath);
-
-  float totalDuration = (float)fileInfo.frames / fileInfo.samplerate;
-
-  const int pickedChannel = 0;
-
-  float *frameBuffer = malloc(WINDOW_SIZE * fileInfo.channels * sizeof(float));
-  int channelArrSize = fileInfo.frames * sizeof(float);
-  float *channelBuffer = malloc(channelArrSize);
-
-  sf_count_t framesRead;
-  size_t channelBufferIndex = 0;
-
-  while ((framesRead = sf_readf_float(file, frameBuffer, WINDOW_SIZE)) > 0) {
-    // Extract one channel from interleaved multi-channel input.
-    for (int i = 0; i < framesRead; i++) {
-      channelBuffer[channelBufferIndex++] =
-          frameBuffer[i * fileInfo.channels + pickedChannel];
-    }
-  }
-
-  free(frameBuffer);
-  sf_close(file);
-
-  size_t totalWindows = ((fileInfo.frames - WINDOW_SIZE) / STEP_SIZE) + 1;
-  float *spectrogram = calloc(totalWindows * WINDOW_SIZE, sizeof(float));
-  size_t spectrogramIndex = 0;
-
-  for (size_t begin = 0; begin <= fileInfo.frames - WINDOW_SIZE;
-       begin += STEP_SIZE) {
-
-    float FFT_IN_BUFF[WINDOW_SIZE];
-    float complex FFT_OUT_BUFF[WINDOW_SIZE];
-    size_t fftInBuffIndex = 0;
-
-    size_t end = begin + WINDOW_SIZE;
-    for (size_t i = begin; i < end; i++) {
-      FFT_IN_BUFF[fftInBuffIndex++] = channelBuffer[i];
-    }
-
-    hammingWindow(FFT_IN_BUFF, WINDOW_SIZE);
-    fft(FFT_IN_BUFF, 1, FFT_OUT_BUFF, WINDOW_SIZE);
-
-    // Convert FFT magnitude to log scale (dB-like) for better contrast.
-    for (size_t y = 0; y < WINDOW_SIZE; y++) {
-      float a = 20 + log10f(0.0001f + cabsf(FFT_OUT_BUFF[y]));
-      spectrogram[spectrogramIndex * WINDOW_SIZE + y] = a;
-    }
-
-    spectrogramIndex++;
-  }
-
-  // MARK:- Image
-  size_t imageWidth = spectrogramIndex;
-  size_t imageHeight = (WINDOW_SIZE / 2);
-  float *transposedData = calloc(imageWidth * WINDOW_SIZE, sizeof(float));
-  float *imageData = calloc(imageWidth * imageHeight, sizeof(float));
-
-  // >>> Transpose
-  for (int x = 0; x < imageWidth; x++) {
-    for (int y = 0; y < WINDOW_SIZE; y++) {
-      transposedData[y * imageWidth + x] = spectrogram[x * WINDOW_SIZE + y];
-    }
-  }
-
-  // >>> Copy only one half of the signal (because of FFT)
-  for (int y = 0; y < imageHeight; y++) {
-    memcpy(imageData + y * imageWidth, transposedData + y * imageWidth,
-           imageWidth * sizeof(float));
+  if (imageData == NULL || imageWidth == 0 || imageHeight == 0) {
+    printf("Failed to process the audio file\n");
+    printf("is image null %d\n", imageData == NULL);
+    printf("is imageWidth = 0 %d\n", imageWidth == 0);
+    printf("is imageHeight = 0 %d\n", imageHeight == 0);
+    return -2;
   }
 
   if (argc > 2) {
@@ -226,17 +159,10 @@ int main(int argc, char *argv[]) {
     }
     printf("Image saved: %s\n", outputFilePath);
 
-    free(transposedData);
     free(imageData);
-    free(spectrogram);
-    free(channelBuffer);
 
     return 0;
   }
-
-  free(transposedData);
-  free(spectrogram);
-  free(channelBuffer);
 
   // MARK:- Raylib
 
@@ -285,4 +211,98 @@ int main(int argc, char *argv[]) {
   CloseWindow();
 
   return 0;
+}
+
+float *processAudio(char *srcPath, int *dstImageWidth, int *dstImageHeight) {
+  SF_INFO fileInfo;
+  memset(&fileInfo, 0, sizeof(fileInfo));
+
+  SNDFILE *file = sf_open(srcPath, SFM_READ, &fileInfo);
+  if (!file) {
+    printf("Error opening file: %s\n", sf_strerror(NULL));
+    return NULL;
+  }
+
+  printf("Processing the audio file: %s\n", srcPath);
+
+  float totalDuration = (float)fileInfo.frames / fileInfo.samplerate;
+
+  const int pickedChannel = 0;
+
+  float *frameBuffer = malloc(WINDOW_SIZE * fileInfo.channels * sizeof(float));
+  int channelArrSize = fileInfo.frames * sizeof(float);
+  float *channelBuffer = malloc(channelArrSize);
+
+  sf_count_t framesRead;
+  size_t channelBufferIndex = 0;
+
+  while ((framesRead = sf_readf_float(file, frameBuffer, WINDOW_SIZE)) > 0) {
+    // Extract one channel from interleaved multi-channel input.
+    for (int i = 0; i < framesRead; i++) {
+      channelBuffer[channelBufferIndex++] =
+          frameBuffer[i * fileInfo.channels + pickedChannel];
+    }
+  }
+
+  free(frameBuffer);
+  if (sf_close(file) < 0) {
+    printf("Failed to close audio file: %s\n", sf_strerror(file));
+    return NULL;
+  }
+
+  size_t totalWindows = ((fileInfo.frames - WINDOW_SIZE) / STEP_SIZE) + 1;
+  float *spectrogram = calloc(totalWindows * WINDOW_SIZE, sizeof(float));
+  size_t spectrogramIndex = 0;
+
+  for (size_t begin = 0; begin <= fileInfo.frames - WINDOW_SIZE;
+       begin += STEP_SIZE) {
+
+    float FFT_IN_BUFF[WINDOW_SIZE];
+    float complex FFT_OUT_BUFF[WINDOW_SIZE];
+    size_t fftInBuffIndex = 0;
+
+    size_t end = begin + WINDOW_SIZE;
+    for (size_t i = begin; i < end; i++) {
+      FFT_IN_BUFF[fftInBuffIndex++] = channelBuffer[i];
+    }
+
+    hammingWindow(FFT_IN_BUFF, WINDOW_SIZE);
+    fft(FFT_IN_BUFF, 1, FFT_OUT_BUFF, WINDOW_SIZE);
+
+    // Convert FFT magnitude to log scale (dB-like) for better contrast.
+    for (size_t y = 0; y < WINDOW_SIZE; y++) {
+      float a = 20 + log10f(0.0001f + cabsf(FFT_OUT_BUFF[y]));
+      spectrogram[spectrogramIndex * WINDOW_SIZE + y] = a;
+    }
+
+    spectrogramIndex++;
+  }
+
+  // MARK:- Image
+  size_t imageWidth = spectrogramIndex;
+  size_t imageHeight = (WINDOW_SIZE / 2);
+  float *transposedData = calloc(imageWidth * WINDOW_SIZE, sizeof(float));
+  float *imageData = calloc(imageWidth * imageHeight, sizeof(float));
+
+  // >>> Transpose
+  for (int x = 0; x < imageWidth; x++) {
+    for (int y = 0; y < WINDOW_SIZE; y++) {
+      transposedData[y * imageWidth + x] = spectrogram[x * WINDOW_SIZE + y];
+    }
+  }
+
+  // >>> Copy only one half of the signal (because of FFT)
+  for (int y = 0; y < imageHeight; y++) {
+    memcpy(imageData + y * imageWidth, transposedData + y * imageWidth,
+           imageWidth * sizeof(float));
+  }
+
+  *dstImageWidth = imageWidth;
+  *dstImageHeight = imageHeight;
+
+  free(transposedData);
+  free(spectrogram);
+  free(channelBuffer);
+
+  return imageData;
 }
