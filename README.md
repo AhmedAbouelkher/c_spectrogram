@@ -4,6 +4,8 @@ A simple Short-Time Fourier Transform (STFT) spectrogram visualizer built in C u
 
 This project is a sub-problem and a precursor to my ongoing [waview](https://github.com/AhmedAbouelkher/waview) project. It was born out of a passion for audio processing and the challenge of implementing these algorithms from scratch in C.
 
+![file_example_WAV_1MG_colored.jpeg](./spectrograms/file_example_WAV_1MG_colored.jpeg)
+
 ## Tech Stack & Libraries
 
 - **C**: The core language used for performance and low-level control.
@@ -11,6 +13,15 @@ This project is a sub-problem and a precursor to my ongoing [waview](https://git
 - **libsndfile**: Handles reading and decoding various audio file formats.
 - **Standard Math Library (`math.h`)**: Leveraged for trigonometric and logarithmic calculations essential for FFT and scaling.
 - **Complex Math Library (`complex.h`)**: Used for handling complex numbers in the FFT implementation.
+
+## Resources & References
+
+These resources were instrumental in the development of this project:
+
+- [The Short-Time Fourier Transform (ArthurFDLR)](https://github.com/ArthurFDLR/ShortTime_FourierTransform) - Great reference for STFT implementation and performance comparison.
+- [Short-time Fourier transform (Wikipedia)](https://en.wikipedia.org/wiki/Short-time_Fourier_transform) - For the mathematical foundation.
+- [PPMIO (leimao)](https://github.com/leimao/PPMIO) - Helpful for understanding PPM image I/O.
+- [Audio Experiments (SebLague)](https://github.com/SebLague/Audio-Experiments) - Excellent visual explanations of Fourier Transforms and audio analysis.
 
 ## Features
 
