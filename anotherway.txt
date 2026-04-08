@@ -1,0 +1,43 @@
+int channelsNum = fileInfo.channels;
+float ABUFFER[WINDOW_SIZE * channelsNum];
+sf_count_t framesRead;
+
+float MONO_BUFFER[WINDOW_SIZE];
+float complex FFT_BUFFER[WINDOW_SIZE];
+
+// Calculate total windows (assuming no overlap for now)
+size_t total_windows = fileInfo.frames / WINDOW_SIZE;
+
+size_t index = 0;
+
+while ((framesRead = sf_readf_float(file, ABUFFER, WINDOW_SIZE)) > 0) {
+printf("[%zu] Read %lld frames ", index, (long long)framesRead);
+
+for (sf_count_t i = 0; i < framesRead; i++) {
+    if (channelsNum == 1) {
+    MONO_BUFFER[i] = ABUFFER[i];
+    } else {
+    float sum = 0.0f;
+    for (int ch = 0; ch < channelsNum; ch++)
+        sum += ABUFFER[i * channelsNum + ch];
+    MONO_BUFFER[i] = sum / channelsNum;
+    }
+}
+
+if (framesRead < WINDOW_SIZE) {
+    size_t remaining = WINDOW_SIZE - framesRead;
+    memset(MONO_BUFFER + framesRead, 0, remaining * sizeof(float));
+}
+
+printf("length of mono buffer: %d\n", ARRAY_LEN(MONO_BUFFER));
+
+hammingWindow(MONO_BUFFER, WINDOW_SIZE);
+fft(MONO_BUFFER, 1, FFT_BUFFER, WINDOW_SIZE);
+
+for (int i = 0; i < WINDOW_SIZE; i++) {
+    float a = 20 + log10f(0.00001f + cabsf(FFT_BUFFER[i]));
+    spectrogram[index * WINDOW_SIZE + i] = a;
+}
+
+index++;
+}

@@ -4,3 +4,6 @@
 compile_commands.json
 stft
 *.ppm
+playground/
+ply_*
+output
