@@ -32,6 +32,8 @@ These resources were instrumental in the development of this project:
 - **Wide Format Support**: Thanks to `libsndfile`, this tool supports most popular audio formats (WAV, FLAC, OGG, etc.) as input.
 - **Export**: Save the generated spectrogram as a high-quality `.ppm` image.
 
+![demo](./spectrograms/demo.png)
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
