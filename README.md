@@ -1,10 +1,16 @@
 # c_spectrogram
 
-A simple Short-Time Fourier Transform (STFT) spectrogram visualizer built in C using [Raylib](https://www.raylib.com/).
+A simple Short-Time Fourier Transform (STFT) spectrogram visualizer built in C using [Raylib](https://www.raylib.com/) and [libsndfile](http://libsndfile.github.io/libsndfile/).
 
 This project is a sub-problem and a precursor to my ongoing [waview](https://github.com/AhmedAbouelkher/waview) project. It was born out of a passion for audio processing and the challenge of implementing these algorithms from scratch in C.
 
-![](./spectrograms/file_example_WAV_1MG_colored.jpeg)
+## Tech Stack & Libraries
+
+- **C**: The core language used for performance and low-level control.
+- **Raylib**: Used for window management, 2D graphics rendering, and UI components.
+- **libsndfile**: Handles reading and decoding various audio file formats.
+- **Standard Math Library (`math.h`)**: Leveraged for trigonometric and logarithmic calculations essential for FFT and scaling.
+- **Complex Math Library (`complex.h`)**: Used for handling complex numbers in the FFT implementation.
 
 ## Features
 
