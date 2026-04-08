@@ -7,3 +7,4 @@ stft
 playground/
 ply_*
 output
+spectrogram
