@@ -4,6 +4,10 @@ A simple Short-Time Fourier Transform (STFT) spectrogram visualizer built in C u
 
 This project is a sub-problem and a precursor to my ongoing [waview](https://github.com/AhmedAbouelkher/waview) project. It was born out of a passion for audio processing and the challenge of implementing these algorithms from scratch in C.
 
+## [TRY THE DEMO IN YOUR BROWSER](https://ahmedabouelkher.github.io/c_spectrogram/)
+
+For the best experience, download and [build the project locally](#building).
+
 ![file_example_WAV_1MG_colored.jpeg](./spectrograms/file_example_WAV_1MG_colored.jpeg)
 
 ## Tech Stack & Libraries
@@ -47,7 +51,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Building
 
-To build the project, simply run:
+To build the project, clone the git submodules first:
+
+```bash
+git submodule update --init --recursive
+```
+
+Then, simply run:
 
 ```bash
 make

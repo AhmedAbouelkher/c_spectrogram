@@ -1,0 +1,6 @@
+[submodule "raygui"]
+	path = libs/raygui
+	url = https://github.com/raysan5/raygui
+[submodule "libs/dr_libs"]
+	path = libs/dr_libs
+	url = https://github.com/mackron/dr_libs.git

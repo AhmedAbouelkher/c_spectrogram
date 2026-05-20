@@ -8,3 +8,4 @@ playground/
 ply_*
 output
 spectrogram
+build/

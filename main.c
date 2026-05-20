@@ -6,7 +6,20 @@
 #include <string.h>
 
 #include "raylib.h"
+
+#ifdef PLATFORM_WEB
+#define DR_WAV_IMPLEMENTATION
+#define DR_MP3_IMPLEMENTATION
+#define DR_FLAC_IMPLEMENTATION
+#include "./libs/dr_libs/dr_flac.h"
+#include "./libs/dr_libs/dr_mp3.h"
+#include "./libs/dr_libs/dr_wav.h"
+#else
 #include "sndfile.h"
+#endif
+
+#define RAYGUI_IMPLEMENTATION
+#include "./libs/raygui/src/raygui.h"
 
 #ifdef _WIN32
 #define PATH_JOIN_SEPARATOR "\\"
@@ -150,9 +163,357 @@ int createRayImage(Image *dst, float *data, int width, int height,
 }
 
 // result manual deallocation is required
-float *processAudio(char *srcPath, int *dstImageWidth, int *dstImageHeight) {
-  size_t STEP_SIZE = (WINDOW_SIZE) / 2;
+float *processAudio(char *srcPath, int *dstImageWidth, int *dstImageHeight);
 
+const char *audioExt(const char *fileExtension) {
+  return fileExtension[0] == '.' ? fileExtension + 1 : fileExtension;
+}
+
+float *buildSpectrogram(float *channelBuffer, size_t frameCount,
+                        int *dstImageWidth, int *dstImageHeight);
+
+int main(int argc, char *argv[]) {
+  char *audioFilePath = NULL;
+
+#ifdef PLATFORM_WEB
+  const char *audioSourceFiles[] = {
+      "resources/file_example_WAV_1MG.wav",
+      "resources/alexgrohl-energetic-action-sport.mp3"};
+  int activeComboBoxIndex = 0;
+  int newDropdownBoxIndex = activeComboBoxIndex;
+  audioFilePath = audioSourceFiles[activeComboBoxIndex];
+#else
+  if (argc != 2) {
+    printf("You should provide the audio file path\n");
+    return -1;
+  }
+  audioFilePath = argv[1];
+#endif
+
+  size_t windowH = 600;
+  size_t windowW = windowH * RAYLIB_WINDOW_ASPECT_RATION;
+
+  InitWindow(windowW, windowH, "STFT");
+  SetTargetFPS(60);
+
+  // MARK:- Audio
+  int imageWidth = 0, imageHeight = 0;
+  float *imageData = NULL;
+
+  imageData = processAudio(audioFilePath, &imageWidth, &imageHeight);
+
+  if (imageData == NULL || imageWidth == 0 || imageHeight == 0) {
+    printf("Failed to process the audio file\n");
+    printf("is image null %d\n", imageData == NULL);
+    printf("is imageWidth = 0 %d\n", imageWidth == 0);
+    printf("is imageHeight = 0 %d\n", imageHeight == 0);
+    return -2;
+  }
+
+  // MARK:- Raylib
+
+  Image img = GenImageColor(imageWidth, imageHeight, WHITE);
+
+  if (createRayImage(&img, imageData, imageWidth, imageHeight,
+                     global_isGrayscale) < 0) {
+    printf("FAILED TO Create THE IMAGE for raylib\n");
+    return -1;
+  }
+
+  Texture2D texture = LoadTextureFromImage(img);
+  if (!IsTextureValid(texture)) {
+    printf("FAILED TO load texture\n");
+    return -1;
+  }
+
+  const char *msgText = NULL;
+  double msgTime = 0;
+
+  Rectangle saveBtnRect = {0, 10, 125, 35};
+  Rectangle gsToggleBtnRect = {10, 10, 80, 30};
+  // top left corner of the window
+  Rectangle audioDropdownBoxRect = {10, 10, 100, 30};
+  bool audioDropdownBoxEditMode = false;
+
+  while (!WindowShouldClose()) {
+
+    BeginDrawing();
+    ClearBackground(BLACK);
+
+    // START: Draw Spectrogram Image Texture
+    if (1) {
+      Rectangle src = {0, 0, texture.width, texture.height};
+      float scaledWidth = (float)texture.height * RAYLIB_WINDOW_ASPECT_RATION;
+      if (scaledWidth < windowW)
+        scaledWidth = windowW;
+      Rectangle dest = {
+          (GetScreenWidth() - scaledWidth) * 0.5f,
+          (GetScreenHeight() - texture.height) * 0.5f,
+          scaledWidth,
+          texture.height,
+      };
+      Vector2 origin = {0.0f, 0.0f};
+      DrawTexturePro(texture, src, dest, origin, 0, WHITE);
+    }
+    // END: Draw Spectrogram Image Texture
+
+    saveBtnRect.x = GetScreenWidth() - saveBtnRect.width - 10;
+    if (GuiButton(saveBtnRect, "Save as Raw Image")) {
+      const char *fileNoExt = GetFileNameWithoutExt(argv[1]);
+      char outputDir[MAX_FILEPATH_LENGTH];
+      strcpy(outputDir, TextFormat(".%soutput", PATH_JOIN_SEPARATOR));
+      if (MakeDirectory(outputDir) != 0) {
+        printf("Failed to create output directory. Using the current "
+               "directory...\n");
+        strcpy(outputDir, GetWorkingDirectory());
+      }
+      char *imgColorType = "_colored";
+      if (global_isGrayscale) {
+        imgColorType = "_grayscale";
+      }
+      const char *fp = TextFormat("%s%s%s%s%s", outputDir, PATH_JOIN_SEPARATOR,
+                                  fileNoExt, imgColorType, ".ppm");
+      printf("Saving image to: %s...\n", fp);
+      if (saveImage(fp, imageData, imageWidth, imageHeight,
+                    global_isGrayscale) < 0) {
+        printf("FAILED TO SAVE THE IMAGE FILE: %s\n", fp);
+        continue;
+      }
+      printf("Image saved: %s\n", fp);
+      // "Image saved at "
+      msgText = TextFormat("Image saved at: %s", fp);
+      msgTime = GetTime();
+    }
+
+    gsToggleBtnRect.x = saveBtnRect.x - gsToggleBtnRect.width - 10;
+    bool prevIsGrayscale = global_isGrayscale;
+    GuiToggle(gsToggleBtnRect, global_isGrayscale ? "Colored" : "Grayscale",
+              &global_isGrayscale);
+    if (prevIsGrayscale != global_isGrayscale) {
+      if (createRayImage(&img, imageData, imageWidth, imageHeight,
+                         global_isGrayscale) < 0) {
+        printf("FAILED TO Create THE IMAGE for raylib\n");
+        continue;
+      }
+
+      texture = LoadTextureFromImage(img);
+      if (!IsTextureValid(texture)) {
+        printf("FAILED TO load texture\n");
+        continue;
+      }
+    }
+
+#ifdef PLATFORM_WEB
+    if (GuiDropdownBox(audioDropdownBoxRect, "WAV;MP3", &newDropdownBoxIndex,
+                       audioDropdownBoxEditMode)) {
+      audioDropdownBoxEditMode = !audioDropdownBoxEditMode;
+
+      if (newDropdownBoxIndex != activeComboBoxIndex) {
+        activeComboBoxIndex = newDropdownBoxIndex;
+        const char *path = audioSourceFiles[activeComboBoxIndex];
+        imageData = processAudio((char *)path, &imageWidth, &imageHeight);
+
+        if (imageData != NULL) {
+          UnloadImage(img);
+          img = GenImageColor(imageWidth, imageHeight, WHITE);
+          if (createRayImage(&img, imageData, imageWidth, imageHeight,
+                             global_isGrayscale) < 0) {
+            printf("FAILED TO Create THE IMAGE for raylib\n");
+          } else {
+            UnloadTexture(texture);
+            texture = LoadTextureFromImage(img);
+            if (!IsTextureValid(texture)) {
+              printf("FAILED TO load texture\n");
+            }
+          }
+        }
+      }
+    }
+#endif
+
+    // Clear the msgText after 5 seconds
+    if (msgText != NULL && (GetTime() - msgTime) > 5.0) {
+      msgText = NULL;
+    }
+    // Raygui draws controls.
+
+    if (msgText != NULL) {
+      int msgTextFontSize = 17;
+      float msgTextWidth = MeasureText(msgText, msgTextFontSize);
+      size_t xPos = (GetScreenWidth() - msgTextWidth) / 2;
+      DrawText(msgText, xPos, 10, msgTextFontSize, RED);
+    }
+
+    EndDrawing();
+  }
+
+  UnloadTexture(texture);
+  free(imageData);
+  CloseWindow();
+
+  return 0;
+}
+
+float *buildSpectrogram(float *channelBuffer, size_t frameCount,
+                        int *dstImageWidth, int *dstImageHeight) {
+  size_t STEP_SIZE = WINDOW_SIZE / 2;
+  if (frameCount < WINDOW_SIZE)
+    return NULL;
+
+  size_t totalWindows = ((frameCount - WINDOW_SIZE) / STEP_SIZE) + 1;
+  float *spectrogram = calloc(totalWindows * WINDOW_SIZE, sizeof(float));
+  if (!spectrogram)
+    return NULL;
+
+  size_t spectrogramIndex = 0;
+  for (size_t begin = 0; begin <= frameCount - WINDOW_SIZE;
+       begin += STEP_SIZE) {
+    float FFT_IN_BUFF[WINDOW_SIZE];
+    float complex FFT_OUT_BUFF[WINDOW_SIZE];
+    for (size_t i = 0; i < WINDOW_SIZE; i++)
+      FFT_IN_BUFF[i] = channelBuffer[begin + i];
+
+    hammingWindow(FFT_IN_BUFF, WINDOW_SIZE);
+    fft(FFT_IN_BUFF, 1, FFT_OUT_BUFF, WINDOW_SIZE);
+
+    for (size_t y = 0; y < WINDOW_SIZE; y++)
+      spectrogram[spectrogramIndex * WINDOW_SIZE + y] =
+          20 + log10f(0.0001f + cabsf(FFT_OUT_BUFF[y]));
+    spectrogramIndex++;
+  }
+
+  size_t imageWidth = spectrogramIndex;
+  size_t imageHeight = WINDOW_SIZE / 2;
+  float *transposedData = calloc(imageWidth * WINDOW_SIZE, sizeof(float));
+  float *imageData = calloc(imageWidth * imageHeight, sizeof(float));
+  if (!transposedData || !imageData) {
+    free(transposedData);
+    free(imageData);
+    free(spectrogram);
+    return NULL;
+  }
+
+  for (int x = 0; x < imageWidth; x++) {
+    for (int y = 0; y < WINDOW_SIZE; y++)
+      transposedData[y * imageWidth + x] = spectrogram[x * WINDOW_SIZE + y];
+  }
+  for (int y = 0; y < imageHeight; y++) {
+    memcpy(imageData + y * imageWidth, transposedData + y * imageWidth,
+           imageWidth * sizeof(float));
+  }
+
+  *dstImageWidth = imageWidth;
+  *dstImageHeight = imageHeight;
+
+  free(transposedData);
+  free(spectrogram);
+  return imageData;
+}
+
+#ifdef PLATFORM_WEB
+float *processAudio(char *srcPath, int *dstImageWidth, int *dstImageHeight) {
+  const char *fileExtension = GetFileExtension(srcPath);
+  const char *ext = audioExt(fileExtension);
+  float *channelBuffer = NULL;
+  size_t channelBufferIndex = 0;
+  if (strcmp(ext, "wav") == 0) {
+    printf("Processing WAV file: %s\n", srcPath);
+    drwav wav;
+    if (!drwav_init_file(&wav, srcPath, NULL)) {
+      printf("Failed to initialize WAV file.\n");
+      return NULL;
+    }
+    size_t frameCount = (size_t)wav.totalPCMFrameCount;
+    channelBuffer = malloc(frameCount * sizeof(float));
+    float *frameBuffer = malloc(WINDOW_SIZE * wav.channels * sizeof(float));
+    if (!channelBuffer || !frameBuffer) {
+      free(channelBuffer);
+      free(frameBuffer);
+      drwav_uninit(&wav);
+      return NULL;
+    }
+    while (channelBufferIndex < frameCount) {
+      size_t framesToRead = frameCount - channelBufferIndex;
+      if (framesToRead > WINDOW_SIZE)
+        framesToRead = WINDOW_SIZE;
+      size_t framesRead =
+          drwav_read_pcm_frames_f32(&wav, framesToRead, frameBuffer);
+      if (framesRead == 0)
+        break;
+      for (size_t i = 0; i < framesRead; i++)
+        channelBuffer[channelBufferIndex++] = frameBuffer[i * wav.channels];
+    }
+    free(frameBuffer);
+    drwav_uninit(&wav);
+  } else if (strcmp(ext, "mp3") == 0) {
+    printf("Processing MP3 file: %s\n", srcPath);
+    drmp3 mp3;
+    if (!drmp3_init_file(&mp3, srcPath, NULL)) {
+      printf("Failed to initialize MP3 file.\n");
+      return NULL;
+    }
+    size_t frameCount = (size_t)drmp3_get_pcm_frame_count(&mp3);
+    channelBuffer = malloc(frameCount * sizeof(float));
+    float *frameBuffer = malloc(WINDOW_SIZE * mp3.channels * sizeof(float));
+    if (!channelBuffer || !frameBuffer) {
+      free(channelBuffer);
+      free(frameBuffer);
+      drmp3_uninit(&mp3);
+      return NULL;
+    }
+    while (channelBufferIndex < frameCount) {
+      size_t framesToRead = frameCount - channelBufferIndex;
+      if (framesToRead > WINDOW_SIZE)
+        framesToRead = WINDOW_SIZE;
+      drmp3_uint64 framesRead =
+          drmp3_read_pcm_frames_f32(&mp3, framesToRead, frameBuffer);
+      if (framesRead == 0)
+        break;
+      for (size_t i = 0; i < (size_t)framesRead; i++)
+        channelBuffer[channelBufferIndex++] = frameBuffer[i * mp3.channels];
+    }
+    free(frameBuffer);
+    drmp3_uninit(&mp3);
+  } else if (strcmp(ext, "flac") == 0) {
+    printf("Processing FLAC file: %s\n", srcPath);
+    drflac *flac = drflac_open_file(srcPath, NULL);
+    if (!flac) {
+      printf("Failed to initialize FLAC file.\n");
+      return NULL;
+    }
+    size_t frameCount = (size_t)flac->totalPCMFrameCount;
+    channelBuffer = malloc(frameCount * sizeof(float));
+    float *frameBuffer = malloc(WINDOW_SIZE * flac->channels * sizeof(float));
+    if (!channelBuffer || !frameBuffer) {
+      free(channelBuffer);
+      free(frameBuffer);
+      drflac_close(flac);
+      return NULL;
+    }
+    while (channelBufferIndex < frameCount) {
+      size_t framesToRead = frameCount - channelBufferIndex;
+      if (framesToRead > WINDOW_SIZE)
+        framesToRead = WINDOW_SIZE;
+      drflac_uint64 framesRead =
+          drflac_read_pcm_frames_f32(flac, framesToRead, frameBuffer);
+      if (framesRead == 0)
+        break;
+      for (size_t i = 0; i < (size_t)framesRead; i++)
+        channelBuffer[channelBufferIndex++] = frameBuffer[i * flac->channels];
+    }
+    free(frameBuffer);
+    drflac_close(flac);
+  } else {
+    printf("Unsupported file extension: %s\n", fileExtension);
+    return NULL;
+  }
+  float *imageData = buildSpectrogram(channelBuffer, channelBufferIndex,
+                                      dstImageWidth, dstImageHeight);
+  free(channelBuffer);
+  return imageData;
+}
+#else
+float *processAudio(char *srcPath, int *dstImageWidth, int *dstImageHeight) {
   SF_INFO fileInfo;
   memset(&fileInfo, 0, sizeof(fileInfo));
 
@@ -163,8 +524,6 @@ float *processAudio(char *srcPath, int *dstImageWidth, int *dstImageHeight) {
   }
 
   printf("Processing the audio file: %s\n", srcPath);
-
-  float totalDuration = (float)fileInfo.frames / fileInfo.samplerate;
 
   const int pickedChannel = 0;
 
@@ -189,254 +548,10 @@ float *processAudio(char *srcPath, int *dstImageWidth, int *dstImageHeight) {
     return NULL;
   }
 
-  size_t totalWindows = ((fileInfo.frames - WINDOW_SIZE) / STEP_SIZE) + 1;
-  float *spectrogram = calloc(totalWindows * WINDOW_SIZE, sizeof(float));
-  size_t spectrogramIndex = 0;
-
-  for (size_t begin = 0; begin <= fileInfo.frames - WINDOW_SIZE;
-       begin += STEP_SIZE) {
-
-    float FFT_IN_BUFF[WINDOW_SIZE];
-    float complex FFT_OUT_BUFF[WINDOW_SIZE];
-    size_t fftInBuffIndex = 0;
-
-    size_t end = begin + WINDOW_SIZE;
-    for (size_t i = begin; i < end; i++) {
-      FFT_IN_BUFF[fftInBuffIndex++] = channelBuffer[i];
-    }
-
-    hammingWindow(FFT_IN_BUFF, WINDOW_SIZE);
-    fft(FFT_IN_BUFF, 1, FFT_OUT_BUFF, WINDOW_SIZE);
-
-    // Convert FFT magnitude to log scale (dB-like) for better contrast.
-    for (size_t y = 0; y < WINDOW_SIZE; y++) {
-      float a = 20 + log10f(0.0001f + cabsf(FFT_OUT_BUFF[y]));
-      spectrogram[spectrogramIndex * WINDOW_SIZE + y] = a;
-    }
-
-    spectrogramIndex++;
-  }
-
-  // MARK:- Image
-  size_t imageWidth = spectrogramIndex;
-  size_t imageHeight = (WINDOW_SIZE / 2);
-  float *transposedData = calloc(imageWidth * WINDOW_SIZE, sizeof(float));
-  float *imageData = calloc(imageWidth * imageHeight, sizeof(float));
-
-  // >>> Transpose
-  for (int x = 0; x < imageWidth; x++) {
-    for (int y = 0; y < WINDOW_SIZE; y++) {
-      transposedData[y * imageWidth + x] = spectrogram[x * WINDOW_SIZE + y];
-    }
-  }
-
-  // >>> Copy only one half of the signal (because of FFT)
-  for (int y = 0; y < imageHeight; y++) {
-    memcpy(imageData + y * imageWidth, transposedData + y * imageWidth,
-           imageWidth * sizeof(float));
-  }
-
-  *dstImageWidth = imageWidth;
-  *dstImageHeight = imageHeight;
-
-  free(transposedData);
-  free(spectrogram);
+  float *imageData = buildSpectrogram(channelBuffer, channelBufferIndex,
+                                      dstImageWidth, dstImageHeight);
   free(channelBuffer);
 
   return imageData;
 }
-
-int main(int argc, char *argv[]) {
-  if (argc != 2) {
-    printf("You should provide the audio file path\n");
-    return -1;
-  }
-
-  // MARK:- Audio
-  int imageWidth = 0, imageHeight = 0;
-
-  float *imageData = processAudio(argv[1], &imageWidth, &imageHeight);
-
-  if (imageData == NULL || imageWidth == 0 || imageHeight == 0) {
-    printf("Failed to process the audio file\n");
-    printf("is image null %d\n", imageData == NULL);
-    printf("is imageWidth = 0 %d\n", imageWidth == 0);
-    printf("is imageHeight = 0 %d\n", imageHeight == 0);
-    return -2;
-  }
-
-  // MARK:- Raylib
-
-  size_t windowH = 600;
-  size_t windowW = windowH * RAYLIB_WINDOW_ASPECT_RATION;
-
-  InitWindow(windowW, windowH, "STFT");
-  SetTargetFPS(60);
-
-  Image img = GenImageColor(imageWidth, imageHeight, WHITE);
-
-  if (createRayImage(&img, imageData, imageWidth, imageHeight,
-                     global_isGrayscale) < 0) {
-    printf("FAILED TO Create THE IMAGE for raylib\n");
-    return -1;
-  }
-
-  Texture2D texture = LoadTextureFromImage(img);
-  if (!IsTextureValid(texture)) {
-    printf("FAILED TO load texture\n");
-    return -1;
-  }
-
-  float fontSize = 12;
-
-  const char *msgText = NULL;
-  double msgTime = 0;
-
-  Rectangle saveBtnRect = {0, 10, 125, 35};
-  const char *saveBtnText = "Save as Raw Image";
-
-  Rectangle gsToggleBtnRect = {10, 10, 80, 30};
-
-  while (!WindowShouldClose()) {
-    // START: Save button
-    saveBtnRect.x = GetScreenWidth() - saveBtnRect.width - 10;
-    Vector2 mouse = GetMousePosition();
-    if (1) {
-      bool btnHovering = CheckCollisionPointRec(mouse, saveBtnRect);
-      bool btnClicked = btnHovering && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
-
-      if (btnHovering) {
-        SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
-      } else {
-        SetMouseCursor(MOUSE_CURSOR_DEFAULT);
-      }
-      if (btnClicked) {
-        const char *fileNoExt = GetFileNameWithoutExt(argv[1]);
-        char outputDir[MAX_FILEPATH_LENGTH];
-        strcpy(outputDir, TextFormat(".%soutput", PATH_JOIN_SEPARATOR));
-        if (MakeDirectory(outputDir) != 0) {
-          printf("Failed to create output directory. Using the current "
-                 "directory...\n");
-          strcpy(outputDir, GetWorkingDirectory());
-        }
-        char *imgColorType = "_colored";
-        if (global_isGrayscale) {
-          imgColorType = "_grayscale";
-        }
-        const char *fp =
-            TextFormat("%s%s%s%s%s", outputDir, PATH_JOIN_SEPARATOR, fileNoExt,
-                       imgColorType, ".ppm");
-        printf("Saving image to: %s...\n", fp);
-        if (saveImage(fp, imageData, imageWidth, imageHeight,
-                      global_isGrayscale) < 0) {
-          printf("FAILED TO SAVE THE IMAGE FILE: %s\n", fp);
-          continue;
-        }
-        printf("Image saved: %s\n", fp);
-        // "Image saved at "
-        msgText = TextFormat("Image saved at: %s", fp);
-        msgTime = GetTime();
-      }
-    }
-    // END: save button
-
-    // START: Grayscale toggle button
-    if (1) {
-      gsToggleBtnRect.x = saveBtnRect.x - gsToggleBtnRect.width - 10;
-      bool btnHovering = CheckCollisionPointRec(mouse, gsToggleBtnRect);
-      bool btnClicked = btnHovering && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
-      if (btnHovering) {
-        SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
-      } else {
-        SetMouseCursor(MOUSE_CURSOR_DEFAULT);
-      }
-      if (btnClicked) {
-        global_isGrayscale = !global_isGrayscale;
-        if (createRayImage(&img, imageData, imageWidth, imageHeight,
-                           global_isGrayscale) < 0) {
-          printf("FAILED TO Create THE IMAGE for raylib\n");
-          continue;
-        }
-
-        texture = LoadTextureFromImage(img);
-        if (!IsTextureValid(texture)) {
-          printf("FAILED TO load texture\n");
-          continue;
-        }
-      }
-    }
-    // END: Grayscale toggle button
-
-    // Clear the msgText after 5 seconds
-    if (msgText != NULL && (GetTime() - msgTime) > 5.0) {
-      msgText = NULL;
-    }
-
-    BeginDrawing();
-    ClearBackground(BLACK);
-
-    // START: Draw Spectrogram Image Texture
-    if (1) {
-      Rectangle src = {0, 0, texture.width, texture.height};
-      float scaledWidth = (float)texture.height * RAYLIB_WINDOW_ASPECT_RATION;
-      if (scaledWidth < windowW)
-        scaledWidth = windowW;
-      Rectangle dest = {
-          (GetScreenWidth() - scaledWidth) * 0.5f,
-          (GetScreenHeight() - texture.height) * 0.5f,
-          scaledWidth,
-          texture.height,
-      };
-      Vector2 origin = {0.0f, 0.0f};
-      DrawTexturePro(texture, src, dest, origin, 0, WHITE);
-    }
-    // END: Draw Spectrogram Image Texture
-
-    // START: Draw Save Button
-    if (1) {
-      DrawRectangleRounded(saveBtnRect, 0.3f, 12, DARKPURPLE);
-      float saveBtnTextWidth = MeasureText(saveBtnText, fontSize);
-      DrawText(
-          saveBtnText,
-          (int)(saveBtnRect.x + saveBtnRect.width / 2 - saveBtnTextWidth / 2),
-          (int)(saveBtnRect.y + saveBtnRect.height / 2 - fontSize / 2),
-          fontSize, WHITE);
-
-      // END: Draw Save Button
-
-      // START: Draw Grayscale Toggle Button
-      char *gsToggleBtnText = "Grayscale";
-      Color gsToggleBgColor = GRAY;
-      Color gsToggleTxtColor = WHITE;
-      if (global_isGrayscale) {
-        gsToggleBtnText = "Colored";
-        gsToggleBgColor = ORANGE;
-        gsToggleTxtColor = BLACK;
-      }
-      DrawRectangleRec(gsToggleBtnRect, gsToggleBgColor);
-      float gsTextWidth = MeasureText(gsToggleBtnText, fontSize);
-      DrawText(
-          gsToggleBtnText,
-          (int)(gsToggleBtnRect.x + gsToggleBtnRect.width / 2 -
-                gsTextWidth / 2),
-          (int)(gsToggleBtnRect.y + gsToggleBtnRect.height / 2 - fontSize / 2),
-          fontSize, gsToggleTxtColor);
-    }
-    // END: Draw Grayscale Toggle Button
-
-    if (msgText != NULL) {
-      int msgTextFontSize = 17;
-      float msgTextWidth = MeasureText(msgText, msgTextFontSize);
-      size_t xPos = (GetScreenWidth() - msgTextWidth) / 2;
-      DrawText(msgText, xPos, 10, msgTextFontSize, RED);
-    }
-
-    EndDrawing();
-  }
-
-  UnloadTexture(texture);
-  free(imageData);
-  CloseWindow();
-
-  return 0;
-}
+#endif
