@@ -17,6 +17,8 @@ BUILD_WEB_FLAGS = $(BUILD_WEB_PATH)/lib/libraylib.a \
 BUILD_WEB_RESOURCES_PATH  ?= $(dir $<)resources@resources
 BUILD_WEB_SHELL ?= minshell.html
 
+.PHONY: build debug clean build-web build-web-deploy
+
 build: clean
 	mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -O3 -o $(BUILD_DIR)/spectrogram main.c $(LDFLAGS)

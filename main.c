@@ -18,6 +18,10 @@
 #include "sndfile.h"
 #endif
 
+#if defined(PLATFORM_WEB)
+#include <emscripten/emscripten.h>
+#endif
+
 #define RAYGUI_IMPLEMENTATION
 #include "./libs/raygui/src/raygui.h"
 
@@ -172,16 +176,33 @@ const char *audioExt(const char *fileExtension) {
 float *buildSpectrogram(float *channelBuffer, size_t frameCount,
                         int *dstImageWidth, int *dstImageHeight);
 
+void UpdateDrawFrame(void);
+
+char *audioFilePath = NULL;
+const char *audioSourceFiles[] = {
+    "resources/file_example_WAV_1MG.wav",
+    "resources/alexgrohl-energetic-action-sport.mp3"};
+int activeComboBoxIndex = 0;
+int newDropdownBoxIndex = 0;
+
+int imageWidth = 0, imageHeight = 0;
+float *imageData = NULL;
+
+bool audioDropdownBoxEditMode = false;
+size_t windowH = 600;
+size_t windowW = 0;
+
+Texture2D texture = {0};
+Image img = {0};
+const char *msgText = NULL;
+double msgTime = 0;
+
 int main(int argc, char *argv[]) {
-  char *audioFilePath = NULL;
 
 #ifdef PLATFORM_WEB
-  const char *audioSourceFiles[] = {
-      "resources/file_example_WAV_1MG.wav",
-      "resources/alexgrohl-energetic-action-sport.mp3"};
-  int activeComboBoxIndex = 0;
-  int newDropdownBoxIndex = activeComboBoxIndex;
-  audioFilePath = audioSourceFiles[activeComboBoxIndex];
+  activeComboBoxIndex = 0;
+  newDropdownBoxIndex = activeComboBoxIndex;
+  audioFilePath = (char *)audioSourceFiles[activeComboBoxIndex];
 #else
   if (argc != 2) {
     printf("You should provide the audio file path\n");
@@ -190,15 +211,10 @@ int main(int argc, char *argv[]) {
   audioFilePath = argv[1];
 #endif
 
-  size_t windowH = 600;
-  size_t windowW = windowH * RAYLIB_WINDOW_ASPECT_RATION;
-
+  windowW = windowH * RAYLIB_WINDOW_ASPECT_RATION;
   InitWindow(windowW, windowH, "STFT");
-  SetTargetFPS(60);
 
   // MARK:- Audio
-  int imageWidth = 0, imageHeight = 0;
-  float *imageData = NULL;
 
   imageData = processAudio(audioFilePath, &imageWidth, &imageHeight);
 
@@ -212,7 +228,7 @@ int main(int argc, char *argv[]) {
 
   // MARK:- Raylib
 
-  Image img = GenImageColor(imageWidth, imageHeight, WHITE);
+  img = GenImageColor(imageWidth, imageHeight, WHITE);
 
   if (createRayImage(&img, imageData, imageWidth, imageHeight,
                      global_isGrayscale) < 0) {
@@ -220,138 +236,151 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  Texture2D texture = LoadTextureFromImage(img);
+  texture = LoadTextureFromImage(img);
   if (!IsTextureValid(texture)) {
     printf("FAILED TO load texture\n");
     return -1;
   }
 
-  const char *msgText = NULL;
-  double msgTime = 0;
-
-  Rectangle saveBtnRect = {0, 10, 125, 35};
-  Rectangle gsToggleBtnRect = {10, 10, 80, 30};
-  // top left corner of the window
-  Rectangle audioDropdownBoxRect = {10, 10, 100, 30};
-  bool audioDropdownBoxEditMode = false;
-
-  while (!WindowShouldClose()) {
-
-    BeginDrawing();
-    ClearBackground(BLACK);
-
-    // START: Draw Spectrogram Image Texture
-    if (1) {
-      Rectangle src = {0, 0, texture.width, texture.height};
-      float scaledWidth = (float)texture.height * RAYLIB_WINDOW_ASPECT_RATION;
-      if (scaledWidth < windowW)
-        scaledWidth = windowW;
-      Rectangle dest = {
-          (GetScreenWidth() - scaledWidth) * 0.5f,
-          (GetScreenHeight() - texture.height) * 0.5f,
-          scaledWidth,
-          texture.height,
-      };
-      Vector2 origin = {0.0f, 0.0f};
-      DrawTexturePro(texture, src, dest, origin, 0, WHITE);
-    }
-    // END: Draw Spectrogram Image Texture
-
-    saveBtnRect.x = GetScreenWidth() - saveBtnRect.width - 10;
-    if (GuiButton(saveBtnRect, "Save as Raw Image")) {
-      const char *fileNoExt = GetFileNameWithoutExt(argv[1]);
-      char outputDir[MAX_FILEPATH_LENGTH];
-      strcpy(outputDir, TextFormat(".%soutput", PATH_JOIN_SEPARATOR));
-      if (MakeDirectory(outputDir) != 0) {
-        printf("Failed to create output directory. Using the current "
-               "directory...\n");
-        strcpy(outputDir, GetWorkingDirectory());
-      }
-      char *imgColorType = "_colored";
-      if (global_isGrayscale) {
-        imgColorType = "_grayscale";
-      }
-      const char *fp = TextFormat("%s%s%s%s%s", outputDir, PATH_JOIN_SEPARATOR,
-                                  fileNoExt, imgColorType, ".ppm");
-      printf("Saving image to: %s...\n", fp);
-      if (saveImage(fp, imageData, imageWidth, imageHeight,
-                    global_isGrayscale) < 0) {
-        printf("FAILED TO SAVE THE IMAGE FILE: %s\n", fp);
-        continue;
-      }
-      printf("Image saved: %s\n", fp);
-      // "Image saved at "
-      msgText = TextFormat("Image saved at: %s", fp);
-      msgTime = GetTime();
-    }
-
-    gsToggleBtnRect.x = saveBtnRect.x - gsToggleBtnRect.width - 10;
-    bool prevIsGrayscale = global_isGrayscale;
-    GuiToggle(gsToggleBtnRect, global_isGrayscale ? "Colored" : "Grayscale",
-              &global_isGrayscale);
-    if (prevIsGrayscale != global_isGrayscale) {
-      if (createRayImage(&img, imageData, imageWidth, imageHeight,
-                         global_isGrayscale) < 0) {
-        printf("FAILED TO Create THE IMAGE for raylib\n");
-        continue;
-      }
-
-      texture = LoadTextureFromImage(img);
-      if (!IsTextureValid(texture)) {
-        printf("FAILED TO load texture\n");
-        continue;
-      }
-    }
-
-#ifdef PLATFORM_WEB
-    if (GuiDropdownBox(audioDropdownBoxRect, "WAV;MP3", &newDropdownBoxIndex,
-                       audioDropdownBoxEditMode)) {
-      audioDropdownBoxEditMode = !audioDropdownBoxEditMode;
-
-      if (newDropdownBoxIndex != activeComboBoxIndex) {
-        activeComboBoxIndex = newDropdownBoxIndex;
-        const char *path = audioSourceFiles[activeComboBoxIndex];
-        imageData = processAudio((char *)path, &imageWidth, &imageHeight);
-
-        if (imageData != NULL) {
-          UnloadImage(img);
-          img = GenImageColor(imageWidth, imageHeight, WHITE);
-          if (createRayImage(&img, imageData, imageWidth, imageHeight,
-                             global_isGrayscale) < 0) {
-            printf("FAILED TO Create THE IMAGE for raylib\n");
-          } else {
-            UnloadTexture(texture);
-            texture = LoadTextureFromImage(img);
-            if (!IsTextureValid(texture)) {
-              printf("FAILED TO load texture\n");
-            }
-          }
-        }
-      }
-    }
+#if defined(PLATFORM_WEB)
+  GuiSetStyle(DEFAULT, TEXT_SIZE, 25);
 #endif
 
-    // Clear the msgText after 5 seconds
-    if (msgText != NULL && (GetTime() - msgTime) > 5.0) {
-      msgText = NULL;
-    }
-    // Raygui draws controls.
+#if defined(PLATFORM_WEB)
+  emscripten_set_main_loop(UpdateDrawFrame, 0, 1);
+#else
+  SetTargetFPS(60); // Set our game to run at 60 frames-per-second
+  //--------------------------------------------------------------------------------------
 
-    if (msgText != NULL) {
-      int msgTextFontSize = 17;
-      float msgTextWidth = MeasureText(msgText, msgTextFontSize);
-      size_t xPos = (GetScreenWidth() - msgTextWidth) / 2;
-      DrawText(msgText, xPos, 10, msgTextFontSize, RED);
-    }
-
-    EndDrawing();
+  // Main game loop
+  while (!WindowShouldClose()) // Detect window close button or ESC key
+  {
+    UpdateDrawFrame();
   }
+#endif
 
   UnloadTexture(texture);
   free(imageData);
   CloseWindow();
 
   return 0;
+}
+
+void UpdateDrawFrame(void) {
+  Rectangle saveBtnRect = {0, 15, 260, 40};
+  Rectangle gsToggleBtnRect = {10, 15, 150, 40};
+  // top left corner of the window
+  Rectangle audioDropdownBoxRect = {10, 15, 160, 50};
+
+  BeginDrawing();
+  ClearBackground(BLACK);
+
+  // START: Draw Spectrogram Image Texture
+  if (1) {
+    Rectangle src = {0, 0, texture.width, texture.height};
+    float scaledWidth = (float)texture.height * RAYLIB_WINDOW_ASPECT_RATION;
+    if (scaledWidth < windowW)
+      scaledWidth = windowW;
+    Rectangle dest = {
+        (GetScreenWidth() - scaledWidth) * 0.5f,
+        (GetScreenHeight() - texture.height) * 0.5f,
+        scaledWidth,
+        texture.height,
+    };
+    Vector2 origin = {0.0f, 0.0f};
+    DrawTexturePro(texture, src, dest, origin, 0, WHITE);
+  }
+  // END: Draw Spectrogram Image Texture
+
+  saveBtnRect.x = GetScreenWidth() - saveBtnRect.width - 10;
+  if (GuiButton(saveBtnRect, "Save as Raw Image")) {
+    const char *fileNoExt = GetFileNameWithoutExt(audioFilePath);
+    char outputDir[MAX_FILEPATH_LENGTH];
+    strcpy(outputDir, TextFormat(".%soutput", PATH_JOIN_SEPARATOR));
+    if (MakeDirectory(outputDir) != 0) {
+      printf("Failed to create output directory. Using the current "
+             "directory...\n");
+      strcpy(outputDir, GetWorkingDirectory());
+    }
+    char *imgColorType = "_colored";
+    if (global_isGrayscale) {
+      imgColorType = "_grayscale";
+    }
+    const char *fp = TextFormat("%s%s%s%s%s", outputDir, PATH_JOIN_SEPARATOR,
+                                fileNoExt, imgColorType, ".ppm");
+    printf("Saving image to: %s...\n", fp);
+    if (saveImage(fp, imageData, imageWidth, imageHeight, global_isGrayscale) <
+        0) {
+      printf("FAILED TO SAVE THE IMAGE FILE: %s\n", fp);
+      goto endDrawing;
+    }
+    printf("Image saved: %s\n", fp);
+    // "Image saved at "
+    msgText = TextFormat("Image saved at: %s", fp);
+    msgTime = GetTime();
+  }
+
+  gsToggleBtnRect.x = saveBtnRect.x - gsToggleBtnRect.width - 10;
+  bool prevIsGrayscale = global_isGrayscale;
+  GuiToggle(gsToggleBtnRect, global_isGrayscale ? "Colored" : "Grayscale",
+            &global_isGrayscale);
+  if (prevIsGrayscale != global_isGrayscale) {
+    if (createRayImage(&img, imageData, imageWidth, imageHeight,
+                       global_isGrayscale) < 0) {
+      printf("FAILED TO Create THE IMAGE for raylib\n");
+      goto endDrawing;
+    }
+
+    texture = LoadTextureFromImage(img);
+    if (!IsTextureValid(texture)) {
+      printf("FAILED TO load texture\n");
+      goto endDrawing;
+    }
+  }
+
+#ifdef PLATFORM_WEB
+  if (GuiDropdownBox(audioDropdownBoxRect, "WAV;MP3", &newDropdownBoxIndex,
+                     audioDropdownBoxEditMode)) {
+    audioDropdownBoxEditMode = !audioDropdownBoxEditMode;
+
+    if (newDropdownBoxIndex != activeComboBoxIndex) {
+      activeComboBoxIndex = newDropdownBoxIndex;
+      const char *path = audioSourceFiles[activeComboBoxIndex];
+      imageData = processAudio((char *)path, &imageWidth, &imageHeight);
+
+      if (imageData != NULL) {
+        UnloadImage(img);
+        img = GenImageColor(imageWidth, imageHeight, WHITE);
+        if (createRayImage(&img, imageData, imageWidth, imageHeight,
+                           global_isGrayscale) < 0) {
+          printf("FAILED TO Create THE IMAGE for raylib\n");
+        } else {
+          UnloadTexture(texture);
+          texture = LoadTextureFromImage(img);
+          if (!IsTextureValid(texture)) {
+            printf("FAILED TO load texture\n");
+          }
+        }
+      }
+    }
+  }
+#endif
+
+  // Clear the msgText after 5 seconds
+  if (msgText != NULL && (GetTime() - msgTime) > 5.0) {
+    msgText = NULL;
+  }
+  // Raygui draws controls.
+
+  if (msgText != NULL) {
+    int msgTextFontSize = 17;
+    float msgTextWidth = MeasureText(msgText, msgTextFontSize);
+    size_t xPos = (GetScreenWidth() - msgTextWidth) / 2;
+    DrawText(msgText, xPos, 10, msgTextFontSize, RED);
+  }
+
+endDrawing:
+  EndDrawing();
 }
 
 float *buildSpectrogram(float *channelBuffer, size_t frameCount,
